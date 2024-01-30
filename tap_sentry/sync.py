@@ -1,21 +1,15 @@
-import os
-import json
 import asyncio
 import urllib
-from pathlib import Path
-from itertools import repeat
 
-from singer import Schema
-from urllib.parse import urljoin
-
-import pytz
-import singer
 import requests
-import pendulum
-from singer.bookmarks import write_bookmark, get_bookmark
-from pendulum import datetime, period
+import singer
+from singer.bookmarks import get_bookmark
 
 LOGGER = singer.get_logger()
+
+ORGANIZATION = "itsmycargo"
+
+
 class SentryAuthentication(requests.auth.AuthBase):
     def __init__(self, api_token: str):
         self.api_token = api_token
@@ -42,7 +36,7 @@ class SentryClient:
         return self._session
 
     def _get(self, path, params=None):
-        #url = urljoin(self._base_url, path)
+        # url = urljoin(self._base_url, path)
         url = self._base_url + path
         response = self.session.get(url, params=params)
         response.raise_for_status()
@@ -51,7 +45,7 @@ class SentryClient:
 
     def projects(self):
         try:
-            projects = self._get(f"/organizations/split-software/projects/")
+            projects = self._get(f"/organizations/{ORGANIZATION}/projects/")
             return projects.json()
         except:
             return None
@@ -59,14 +53,24 @@ class SentryClient:
     def issues(self, project_id, state):
         try:
             bookmark = get_bookmark(state, "issues", "start")
-            query = f"/organizations/split-software/issues/?project={project_id}"
+            query = f"/organizations/{ORGANIZATION}/issues/?project={project_id}"
             if bookmark:
-                query += "&start=" + urllib.parse.quote(bookmark) + "&utc=true" + '&end=' + urllib.parse.quote(singer.utils.strftime(singer.utils.now()))
+                query += (
+                    "&start="
+                    + urllib.parse.quote(bookmark)
+                    + "&utc=true"
+                    + "&end="
+                    + urllib.parse.quote(singer.utils.strftime(singer.utils.now()))
+                )
             response = self._get(query)
             issues = response.json()
-            url= response.url
-            while (response.links is not None and response.links.__len__() >0  and response.links['next']['results'] == 'true'):
-                url = response.links['next']['url']
+            url = response.url
+            while (
+                response.links is not None
+                and response.links.__len__() > 0
+                and response.links["next"]["results"] == "true"
+            ):
+                url = response.links["next"]["url"]
                 response = self.session.get(url)
                 issues += response.json()
             return issues
@@ -77,28 +81,41 @@ class SentryClient:
     def events(self, project_id, state):
         try:
             bookmark = get_bookmark(state, "events", "start")
-            query = f"/organizations/split-software/events/?project={project_id}"
+            query = f"/organizations/{ORGANIZATION}/events/?project={project_id}"
             if bookmark:
-                query += "&start=" + urllib.parse.quote(bookmark) + "&utc=true" + '&end=' + urllib.parse.quote(singer.utils.strftime(singer.utils.now()))
+                query += (
+                    "&start="
+                    + urllib.parse.quote(bookmark)
+                    + "&utc=true"
+                    + "&end="
+                    + urllib.parse.quote(singer.utils.strftime(singer.utils.now()))
+                )
             response = self._get(query)
             events = response.json()
-            url= response.url
-            while (response.links is not None and response.links.__len__() >0  and response.links['next']['results'] == 'true'):
-                url = response.links['next']['url']
+            url = response.url
+            while (
+                response.links is not None
+                and response.links.__len__() > 0
+                and response.links["next"]["results"] == "true"
+            ):
+                url = response.links["next"]["url"]
                 response = self.session.get(url)
                 events += response.json()
             return events
         except:
             return None
-        
 
     def teams(self, state):
         try:
-            response = self._get(f"/organizations/split-software/teams/")
+            response = self._get(f"/organizations/{ORGANIZATION}/teams/")
             teams = response.json()
             extraction_time = singer.utils.now()
-            while (response.links is not None and response.links.__len__() >0  and  response.links['next']['results'] == 'true'):
-                url = response.links['next']['url']
+            while (
+                response.links is not None
+                and response.links.__len__() > 0
+                and response.links["next"]["results"] == "true"
+            ):
+                url = response.links["next"]["url"]
                 response = self.session.get(url)
                 teams += response.json()
             return teams
@@ -107,7 +124,7 @@ class SentryClient:
 
     def users(self, state):
         try:
-            response = self._get(f"/organizations/split-software/users/")
+            response = self._get(f"/organizations/{ORGANIZATION}/users/")
             users = response.json()
             return users
         except:
@@ -137,67 +154,75 @@ class SentrySync:
         func = getattr(self, f"sync_{stream}")
         return func(schema)
 
-    async def sync_issues(self, schema, period: pendulum.period = None):
+    async def sync_issues(self, schema):
         """Issues per project."""
         stream = "issues"
         loop = asyncio.get_event_loop()
 
         singer.write_schema(stream, schema, ["id"])
         extraction_time = singer.utils.now()
+
         if self.projects:
             for project in self.projects:
-                issues = await loop.run_in_executor(None, self.client.issues, project['id'], self.state)
-                if (issues):
+                issues = await loop.run_in_executor(
+                    None, self.client.issues, project["id"], self.state
+                )
+                if issues:
                     for issue in issues:
                         singer.write_record(stream, issue)
 
-        self.state = singer.write_bookmark(self.state, 'issues', 'start', singer.utils.strftime(extraction_time))
+        self.state = singer.write_bookmark(
+            self.state, "issues", "start", singer.utils.strftime(extraction_time)
+        )
 
     async def sync_projects(self, schema):
         """Issues per project."""
         stream = "projects"
         loop = asyncio.get_event_loop()
-        singer.write_schema('projects', schema, ["id"])
+        singer.write_schema("projects", schema, ["id"])
         if self.projects:
             for project in self.projects:
                 singer.write_record(stream, project)
 
-
-    async  def sync_events(self, schema, period: pendulum.period = None):
+    async def sync_events(self, schema):
         """Events per project."""
         stream = "events"
         loop = asyncio.get_event_loop()
 
-        singer.write_schema(stream, schema, ["eventID"])  
+        singer.write_schema(stream, schema, ["eventID"])
         extraction_time = singer.utils.now()
         if self.projects:
             for project in self.projects:
-                events = await loop.run_in_executor(None, self.client.events, project['id'], self.state)
+                events = await loop.run_in_executor(
+                    None, self.client.events, project["id"], self.state
+                )
                 if events:
                     for event in events:
                         singer.write_record(stream, event)
-            self.state = singer.write_bookmark(self.state, 'events', 'start', singer.utils.strftime(extraction_time))
+            self.state = singer.write_bookmark(
+                self.state, "events", "start", singer.utils.strftime(extraction_time)
+            )
 
     async def sync_users(self, schema):
         "Users in the organization."
         stream = "users"
         loop = asyncio.get_event_loop()
-        singer.write_schema(stream, schema, ["id"]) 
+        singer.write_schema(stream, schema, ["id"])
         users = await loop.run_in_executor(None, self.client.users, self.state)
         if users:
             for user in users:
                 singer.write_record(stream, user)
-        #extraction_time = singer.utils.now()
-        #self.state = singer.write_bookmark(self.state, 'users', 'dateCreated', singer.utils.strftime(extraction_time))
+        # extraction_time = singer.utils.now()
+        # self.state = singer.write_bookmark(self.state, 'users', 'dateCreated', singer.utils.strftime(extraction_time))
 
     async def sync_teams(self, schema):
         "Teams in the organization."
         stream = "teams"
         loop = asyncio.get_event_loop()
-        singer.write_schema(stream, schema, ["id"]) 
+        singer.write_schema(stream, schema, ["id"])
         teams = await loop.run_in_executor(None, self.client.teams, self.state)
         if teams:
             for team in teams:
                 singer.write_record(stream, team)
-        #extraction_time = singer.utils.now()
-        #self.state = singer.write_bookmark(self.state, 'teams', 'dateCreated', singer.utils.strftime(extraction_time))
+        # extraction_time = singer.utils.now()
+        # self.state = singer.write_bookmark(self.state, 'teams', 'dateCreated', singer.utils.strftime(extraction_time))
